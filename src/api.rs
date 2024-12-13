@@ -45,7 +45,7 @@ pub struct ApiLamps {
 }
 
 pub fn getapidata(ip: &String, debug: bool) -> Result<ApiVehicleType, Box<dyn std::error::Error>> {
-    let request_url = format!("http://{}:37337/Vehicles/Current", ip);
+    let request_url = format!("http://{}:37337/Vehicles/current", ip);
 
     let timeout = Duration::new(2, 0);
     let client = Client::new();
@@ -55,7 +55,7 @@ pub fn getapidata(ip: &String, debug: bool) -> Result<ApiVehicleType, Box<dyn st
     }
 
     let response = client.get(&request_url).timeout(timeout).send()?; // wir warten auf die antwort
-                                                                      // eprintln!("http get erfolgt");
+                                                                    //   eprintln!("http get erfolgt");
 
     if !response.status().is_success() {
         Err("Error: response code")?
