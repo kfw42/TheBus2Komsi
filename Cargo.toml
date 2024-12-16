@@ -16,6 +16,7 @@ configparser = "3.0.4"
 [features]
 disablekomsiport = []
 enablefilelogging = []  # Schalter für das Schreiben in die Datei
+enabletcptransfer = []  # Schalter für die Übertragung via TCP-Sockets
 
 
 [[bin]]

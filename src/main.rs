@@ -6,6 +6,7 @@ mod serial;
 mod vehicle;
 
 use std::io::{self, Read, Write};
+use std::net::TcpStream;
 use std::thread;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -25,6 +26,10 @@ use crate::vehicle::print_vehicle_state;
 #[cfg(feature = "enablefilelogging")]
 use std::fs::OpenOptions;
 
+// TCP-Logging nur aktiv, wenn Feature "enabletcptransfer" aktiviert ist
+// #[cfg(feature = "enabletcptransfer")]
+use std::sync::{Arc, Mutex};
+
 fn main() {
     let opts = Opts::from_args();
 
@@ -42,7 +47,7 @@ fn real_main(opts: &Opts) {
     
     let debug = opts.debug;
     let debug_serial = opts.debug_serial;
-    let debug_command = opts.debug_command;
+    // let debug_command = opts.debug_command;
     let verbose = opts.verbose;
 
     #[cfg(feature = "disablekomsiport")]
@@ -51,7 +56,7 @@ fn real_main(opts: &Opts) {
     #[cfg(feature = "enablefilelogging")]
     let verbose = true;
 
-    // if debug_command {
+    // if debug_command { 
     //     let verbose = true;
     // }
 
@@ -72,7 +77,10 @@ fn real_main(opts: &Opts) {
     let baudrate = config.getint("default", "baudrate").unwrap().unwrap() as u32;
     let sleeptime = config.getint("default", "sleeptime").unwrap().unwrap() as u64;
     let portname = config.get("default", "portname").unwrap();
-    let clientip = config.get("default", "ip").unwrap();
+    let game_ip = config.get("default", "game-ip").unwrap();
+    let komsi_ip = config.get("default", "komsi-ip").unwrap_or_else(|| "127.0.0.1".to_string());
+    let komsi_port = config.getint("default", "komsi-port").unwrap_or(Some(12345)).unwrap();
+
 
     #[cfg(not(feature = "disablekomsiport"))]
     let mut port = serialport::new(&portname, baudrate)
@@ -100,6 +108,17 @@ fn real_main(opts: &Opts) {
     #[cfg(feature = "enablefilelogging")]
     println!("logging cmdbuf into file {}", filename);    
 
+    // TCP-Socket initialisieren (nur bei aktiviertem Feature)
+    // #[cfg(feature = "enabletcptransfer")]
+    let tcp_stream = Arc::new(Mutex::new(
+        TcpStream::connect((komsi_ip.as_str(), komsi_port as u16))
+            .expect("Could not connect to TCP server"),
+    ));
+
+    // #[cfg(feature = "enabletcptransfer")]
+    println!("Connected to TCP server at {}:{}", komsi_ip, komsi_port);
+
+
     // send SimulatorType:TheBus
     let string = "O1\x0a";
     let buffer = string.as_bytes();
@@ -113,6 +132,17 @@ fn real_main(opts: &Opts) {
     let buf_str = &buf_str[..buf_str.len() - 1];
     writeln!(log_file, "BUFFER: {:?} <{}>", buffer, buf_str).expect("Konnte in log.txt nicht schreiben");
     }
+
+    // Sende buffer über TCP, wenn Feature aktiv ist
+    // #[cfg(feature = "enabletcptransfer")]
+    {
+        let buf_trunc = &buffer[..buffer.len() - 1];
+        let mut stream = tcp_stream.lock().unwrap();
+        stream
+            .write_all(buf_trunc)
+            .expect("Failed to send buffer over TCP");
+    }
+
 
     #[cfg(not(feature = "disablekomsiport"))]
     // Clone the port
@@ -154,11 +184,11 @@ fn real_main(opts: &Opts) {
     let mut next_time = Instant::now() + interval;
 
     loop {
-        let api_bus_result = getapidata(&clientip, opts.debug);
+        let api_bus_result = getapidata(&game_ip, opts.debug);
 
         if api_bus_result.is_err() {
             if debug {
-             eprintln!("getapidata error: {}", api_bus_result.unwrap_err());
+                eprintln!("getapidata error: {}", api_bus_result.unwrap_err());
             }
             if api_state != 0 {
                 if verbose {
@@ -196,13 +226,24 @@ fn real_main(opts: &Opts) {
                             writeln!(log_file, "CMDBUF: {:?} <{}>", cmdbuf, buf_str).expect(&format!("Coudn't write in file {}!", filename));
             }
 
+            // #[cfg(feature = "enabletcptransfer")]
+            if !cmdbuf.is_empty() {
+                let mut buf_trunc = cmdbuf.clone();
+                buf_trunc.pop();
+                let mut stream = tcp_stream.lock().unwrap();
+                stream
+                    .write_all(&buf_trunc)
+                    .expect("Failed to send cmdbuf over TCP");
+            }
+
             #[cfg(not(feature = "disablekomsiport"))]
-            if cmdbuf.len() > 0 {
+            if !cmdbuf.is_empty() {
                 if opts.debug_serial {
                     println!("SENDING -> {:?}", cmdbuf);
                 }
 
                 // Write to serial port
+
                 let _ = port.write(&cmdbuf);
             }
 
